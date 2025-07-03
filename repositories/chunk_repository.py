@@ -4,11 +4,15 @@ from sqlalchemy import select, update, delete, and_
 from sqlalchemy.orm import selectinload
 from database.models import Chunk
 from schemas.chunk_schema import ChunkCreate, ChunkUpdate
+from decorators import logger, timer
 
 class ChunkRepository:
+
     def __init__(self, db: AsyncSession):
         self.db = db
     
+    @logger
+    @timer
     async def create(self, chunk_data: ChunkCreate) -> Chunk:
         """Create a new chunk"""
         chunk = Chunk(
@@ -24,6 +28,8 @@ class ChunkRepository:
         await self.db.refresh(chunk)
         return chunk
     
+    @logger
+    @timer
     async def get(self, chunk_id: str) -> Optional[Chunk]:
         """Get chunk by ID"""
         result = await self.db.execute(
@@ -31,6 +37,8 @@ class ChunkRepository:
         )
         return result.scalar_one_or_none()
     
+    @logger
+    @timer
     async def get_by_library(self, library_id: str) -> List[Chunk]:
         """Get all chunks in a library"""
         result = await self.db.execute(
@@ -38,6 +46,8 @@ class ChunkRepository:
         )
         return result.scalars().all()
     
+    @logger
+    @timer
     async def get_by_document(self, document_id: str) -> List[Chunk]:
         """Get all chunks in a document"""
         result = await self.db.execute(
@@ -45,6 +55,8 @@ class ChunkRepository:
         )
         return result.scalars().all()
     
+    @logger
+    @timer
     async def get_unindexed_chunks(self, library_id: str) -> List[Chunk]:
         """Get chunks in library that don't have embeddings yet"""
         result = await self.db.execute(
@@ -57,6 +69,8 @@ class ChunkRepository:
         )
         return result.scalars().all()
     
+    @logger
+    @timer
     async def get_indexed_chunks(self, library_id: str) -> List[Chunk]:
         """Get chunks in library that have embeddings"""
         result = await self.db.execute(
@@ -69,6 +83,8 @@ class ChunkRepository:
         )
         return result.scalars().all()
     
+    @logger
+    @timer
     async def update(self, chunk_id: str, update_data: ChunkUpdate) -> Optional[Chunk]:
         """Update chunk"""
         chunk = await self.get(chunk_id)
@@ -91,6 +107,8 @@ class ChunkRepository:
         await self.db.refresh(chunk)
         return chunk
     
+    @logger
+    @timer
     async def update_embedding(self, chunk_id: str, embedding_model: str) -> bool:
         """Update chunk embedding status"""
         result = await self.db.execute(
@@ -101,6 +119,8 @@ class ChunkRepository:
         await self.db.commit()
         return result.rowcount > 0
     
+    @logger
+    @timer
     async def delete(self, chunk_id: str) -> bool:
         """Delete chunk"""
         result = await self.db.execute(
@@ -109,6 +129,8 @@ class ChunkRepository:
         await self.db.commit()
         return result.rowcount > 0
     
+    @logger
+    @timer
     async def delete_by_library(self, library_id: str) -> int:
         """Delete all chunks in a library. Returns count of deleted chunks."""
         result = await self.db.execute(
@@ -117,6 +139,8 @@ class ChunkRepository:
         await self.db.commit()
         return result.rowcount
     
+    @logger
+    @timer
     async def delete_by_document(self, document_id: str) -> int:
         """Delete all chunks in a document. Returns count of deleted chunks."""
         result = await self.db.execute(
@@ -125,6 +149,8 @@ class ChunkRepository:
         await self.db.commit()
         return result.rowcount
     
+    @logger
+    @timer
     async def exists(self, chunk_id: str) -> bool:
         """Check if chunk exists"""
         result = await self.db.execute(
@@ -132,6 +158,8 @@ class ChunkRepository:
         )
         return result.scalar_one_or_none() is not None
     
+    @logger
+    @timer
     async def count_by_library(self, library_id: str) -> int:
         """Count chunks in library"""
         result = await self.db.execute(
@@ -139,6 +167,8 @@ class ChunkRepository:
         )
         return len(result.scalars().all())
     
+    @logger
+    @timer
     async def count_by_document(self, document_id: str) -> int:
         """Count chunks in document"""
         result = await self.db.execute(
@@ -146,6 +176,8 @@ class ChunkRepository:
         )
         return len(result.scalars().all())
     
+    @logger
+    @timer
     async def get_library_chunk_ids(self, library_id: str) -> List[str]:
         """Get list of chunk IDs for a library"""
         result = await self.db.execute(
@@ -153,6 +185,8 @@ class ChunkRepository:
         )
         return [str(chunk_id) for chunk_id in result.scalars().all()]
     
+    @logger
+    @timer
     async def get_document_chunk_ids(self, document_id: str) -> List[str]:
         """Get list of chunk IDs for a document"""
         result = await self.db.execute(
@@ -160,6 +194,8 @@ class ChunkRepository:
         )
         return [str(chunk_id) for chunk_id in result.scalars().all()]
     
+    @logger
+    @timer
     async def filter_chunks(self, library_id: str, filters: Dict[str, Any]) -> List[Chunk]:
         """Filter chunks by metadata"""
         query = select(Chunk).where(Chunk.library_id == library_id)
@@ -176,6 +212,8 @@ class ChunkRepository:
         result = await self.db.execute(query)
         return result.scalars().all()
     
+    @logger
+    @timer
     async def get_with_relationships(self, chunk_id: str) -> Optional[Chunk]:
         """Get chunk with library and document relationships loaded"""
         result = await self.db.execute(
@@ -185,6 +223,8 @@ class ChunkRepository:
         )
         return result.scalar_one_or_none()
     
+    @logger
+    @timer
     async def get_stats(self) -> Dict[str, int]:
         """Get repository statistics"""
         result = await self.db.execute(

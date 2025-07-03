@@ -1,12 +1,14 @@
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Annotated, List
+from uuid import UUID
 
 from services.library_service import LibraryService
 from repositories.library_repository import LibraryRepository
 from database.database import get_db
 from schemas.library_schema import LibraryCreate, LibraryUpdate, LibraryResponse
 from exceptions import LibraryNotFoundError, DatabaseError, ValidationError
+from decorators import logger, timer
 
 async def get_library_service(db: AsyncSession = Depends(get_db)) -> LibraryService:
     library_repository = LibraryRepository(db)
@@ -17,6 +19,8 @@ library_service_dependency = Annotated[LibraryService, Depends(get_library_servi
 router = APIRouter(prefix="/libraries", tags=["libraries"])
 
 @router.post("/", response_model=LibraryResponse, status_code=status.HTTP_201_CREATED)
+@logger
+@timer
 async def create_library(
     library_data: LibraryCreate,
     library_service: library_service_dependency
@@ -37,6 +41,8 @@ async def create_library(
         )
 
 @router.get("/", response_model=List[LibraryResponse])
+@logger
+@timer
 async def get_all_libraries(library_service: library_service_dependency):
     """Get all libraries"""
     try:
@@ -49,13 +55,15 @@ async def get_all_libraries(library_service: library_service_dependency):
         )
 
 @router.get("/{library_id}", response_model=LibraryResponse)
+@logger
+@timer
 async def get_library(
-    library_id: str,
+    library_id: Annotated[UUID, Path(description="The UUID of the library")],
     library_service: library_service_dependency
 ):
     """Get library by ID"""
     try:
-        library = await library_service.get_library(library_id)
+        library = await library_service.get_library(str(library_id))
         return library
     except LibraryNotFoundError as e:
         raise HTTPException(
@@ -69,14 +77,16 @@ async def get_library(
         )
 
 @router.put("/{library_id}", response_model=LibraryResponse)
+@logger
+@timer
 async def update_library(
-    library_id: str,
+    library_id: Annotated[UUID, Path(description="The UUID of the library")],
     update_data: LibraryUpdate,
     library_service: library_service_dependency
 ):
     """Update library"""
     try:
-        library = await library_service.update_library(library_id, update_data)
+        library = await library_service.update_library(str(library_id), update_data)
         return library
     except LibraryNotFoundError as e:
         raise HTTPException(
@@ -95,13 +105,15 @@ async def update_library(
         )
 
 @router.delete("/{library_id}", status_code=status.HTTP_204_NO_CONTENT)
+@logger
+@timer
 async def delete_library(
-    library_id: str,
+    library_id: Annotated[UUID, Path(description="The UUID of the library")],
     library_service: library_service_dependency
 ):
     """Delete library and all its chunks/documents"""
     try:
-        await library_service.delete_library(library_id)
+        await library_service.delete_library(str(library_id))
         return None
     except LibraryNotFoundError as e:
         raise HTTPException(
@@ -115,7 +127,12 @@ async def delete_library(
         )
 
 @router.get("/{library_id}/stats")
-async def get_library_stats(library_service: library_service_dependency):
+@logger
+@timer
+async def get_library_stats(
+    library_id: Annotated[UUID, Path(description="The UUID of the library")],
+    library_service: library_service_dependency
+):
     """Get aggregated library statistics"""
     try:
         stats = await library_service.get_library_stats()
@@ -127,7 +144,11 @@ async def get_library_stats(library_service: library_service_dependency):
         )
 
 @router.post("/{library_id}/knn-search")
-async def knn_search(library_id: str):
+@logger
+@timer
+async def knn_search(
+    library_id: Annotated[UUID, Path(description="The UUID of the library")]
+):
     """Perform k-NN search (placeholder for vector search implementation)"""
     # TODO: Implement k-NN search once vector indexing is complete
     raise HTTPException(

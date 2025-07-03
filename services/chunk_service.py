@@ -3,6 +3,7 @@ from repositories import ChunkRepository, DocumentRepository, LibraryRepository
 from schemas.chunk_schema import ChunkCreate, ChunkUpdate, ChunkResponse, ChunkMetadata
 from schemas.document_schema import DocumentMetadata
 from exceptions import ChunkNotFoundError, LibraryNotFoundError, DatabaseError, ChunkNotInLibraryError
+from decorators import logger
 
 class ChunkService:
     def __init__(self, 
@@ -13,6 +14,7 @@ class ChunkService:
         self.document_repository = document_repository
         self.library_repository = library_repository
 
+    @logger
     async def create_chunk(self, data: ChunkCreate) -> ChunkResponse:
         """Create a new chunk with automatic document management"""
         try:
@@ -53,6 +55,7 @@ class ChunkService:
         except Exception as e:
             raise DatabaseError(f"Failed to create chunk: {str(e)}")
 
+    @logger
     async def get_chunk(self, chunk_id: str) -> ChunkResponse:
         """Get chunk by ID"""
         try:
@@ -66,6 +69,7 @@ class ChunkService:
         except Exception as e:
             raise DatabaseError(f"Failed to fetch chunk: {str(e)}")
 
+    @logger
     async def get_chunks_by_library(self, library_id: str) -> List[ChunkResponse]:
         """Get all chunks in a library"""
         try:
@@ -80,6 +84,7 @@ class ChunkService:
         except Exception as e:
             raise DatabaseError(f"Failed to fetch chunks: {str(e)}")
 
+    @logger
     async def update_chunk(self, chunk_id: str, data: ChunkUpdate) -> ChunkResponse:
         """Update chunk with automatic document re-management if needed"""
         try:
@@ -107,6 +112,7 @@ class ChunkService:
         except Exception as e:
             raise DatabaseError(f"Failed to update chunk: {str(e)}")
 
+    @logger
     async def delete_chunk(self, chunk_id: str) -> None:
         """Delete chunk and update document/library statistics"""
         try:
@@ -124,6 +130,7 @@ class ChunkService:
         except Exception as e:
             raise DatabaseError(f"Failed to delete chunk: {str(e)}")
 
+    @logger
     async def get_unindexed_chunks(self, library_id: str) -> List[ChunkResponse]:
         """Get chunks that don't have embeddings yet"""
         try:
@@ -137,6 +144,7 @@ class ChunkService:
         except Exception as e:
             raise DatabaseError(f"Failed to fetch unindexed chunks: {str(e)}")
 
+    @logger
     async def get_chunk_stats(self) -> dict:
         """Get chunk statistics"""
         try:
@@ -144,6 +152,7 @@ class ChunkService:
         except Exception as e:
             raise DatabaseError(f"Failed to fetch chunk statistics: {str(e)}")
 
+    @logger
     async def verify_chunk_in_library(self, chunk_id: str, library_id: str) -> ChunkResponse:
         """Verify chunk exists and belongs to the specified library"""
         try:
@@ -171,8 +180,8 @@ class ChunkService:
             id=str(chunk.id),
             text=chunk.text,
             embedding=None,  # Embeddings stored in memory, not in DB
-            document_id=chunk.document_id,
-            library_id=chunk.library_id,
+            document_id=str(chunk.document_id),
+            library_id=str(chunk.library_id),
             metadata=metadata,
             similarity_score=None
         ) 

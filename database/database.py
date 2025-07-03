@@ -1,9 +1,12 @@
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 import os
 from .models import Base
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Database URL - using asyncpg for PostgreSQL async support
-DATABASE_URL = os.getenv("DATABASE_URL", "")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Create async SQLAlchemy engine
 engine = create_async_engine(
@@ -32,11 +35,7 @@ AsyncSessionLocal = async_sessionmaker(
 async def get_db() -> AsyncSession:
     session = AsyncSessionLocal()
     try:
-        async with session.begin():
-            yield session
-    except Exception:
-        await session.rollback()
-        raise
+        yield session
     finally:
         await session.close()
 

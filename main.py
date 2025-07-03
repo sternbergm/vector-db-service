@@ -12,7 +12,7 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown  
     await close_db()
-    print("Error creating tables")
+    print("Database connection closed")
 
 app = FastAPI(
     title="Vector DB Service",
@@ -35,3 +35,7 @@ def root():
         "docs": "/docs",
         "health": "/health"
     }
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

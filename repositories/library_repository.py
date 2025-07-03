@@ -4,11 +4,13 @@ from sqlalchemy import select, update, delete
 from sqlalchemy.orm import selectinload
 from database.models import Library
 from schemas.library_schema import LibraryCreate, LibraryUpdate
-
+from decorators import logger, timer
 class LibraryRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
     
+    @logger
+    @timer
     async def create(self, library_data: LibraryCreate) -> Library:
         """Create a new library"""
         library = Library(
@@ -21,6 +23,8 @@ class LibraryRepository:
         await self.db.refresh(library)
         return library
     
+    @logger
+    @timer
     async def get(self, library_id: str) -> Optional[Library]:
         """Get library by ID"""
         result = await self.db.execute(
@@ -28,11 +32,15 @@ class LibraryRepository:
         )
         return result.scalar_one_or_none()
     
+    @logger
+    @timer
     async def get_all(self) -> List[Library]:
         """Get all libraries"""
         result = await self.db.execute(select(Library))
         return result.scalars().all()
     
+    @logger
+    @timer
     async def update(self, library_id: str, update_data: LibraryUpdate) -> Optional[Library]:
         """Update library"""
         library = await self.get(library_id)
@@ -52,6 +60,8 @@ class LibraryRepository:
         await self.db.refresh(library)
         return library
     
+    @logger
+    @timer
     async def delete(self, library_id: str) -> bool:
         """Delete library"""
         result = await self.db.execute(
@@ -60,6 +70,8 @@ class LibraryRepository:
         await self.db.commit()
         return result.rowcount > 0
     
+    @logger
+    @timer
     async def exists(self, library_id: str) -> bool:
         """Check if library exists"""
         result = await self.db.execute(
@@ -69,6 +81,8 @@ class LibraryRepository:
     
     
     
+    @logger
+    @timer
     async def mark_indexed(self, library_id: str) -> bool:
         """Mark library as indexed"""
         result = await self.db.execute(
@@ -79,6 +93,8 @@ class LibraryRepository:
         await self.db.commit()
         return result.rowcount > 0
     
+    @logger
+    @timer
     async def mark_unindexed(self, library_id: str) -> bool:
         """Mark library as not indexed"""
         result = await self.db.execute(
@@ -89,6 +105,8 @@ class LibraryRepository:
         await self.db.commit()
         return result.rowcount > 0
     
+    @logger
+    @timer
     async def get_with_relationships(self, library_id: str) -> Optional[Library]:
         """Get library with documents and chunks loaded"""
         result = await self.db.execute(
@@ -98,6 +116,8 @@ class LibraryRepository:
         )
         return result.scalar_one_or_none()
     
+    @logger
+    @timer
     async def get_stats(self) -> dict:
         """Get repository statistics"""
         result = await self.db.execute(

@@ -2,11 +2,12 @@ from typing import List, Optional
 from repositories import LibraryRepository
 from schemas.library_schema import LibraryCreate, LibraryUpdate, LibraryResponse, LibraryMetadata
 from exceptions import LibraryNotFoundError, DatabaseError
-
+from decorators import logger
 class LibraryService:
     def __init__(self, library_repository: LibraryRepository):
         self.library_repository = library_repository
 
+    @logger
     async def create_library(self, data: LibraryCreate) -> LibraryResponse:
         """Create a new library"""
         try:
@@ -27,6 +28,7 @@ class LibraryService:
         except Exception as e:
             raise DatabaseError(f"Failed to create library: {str(e)}")
 
+    @logger
     async def get_library(self, library_id: str) -> LibraryResponse:
         """Get library by ID"""
         try:
@@ -50,6 +52,7 @@ class LibraryService:
         except Exception as e:
             raise DatabaseError(f"Failed to fetch library: {str(e)}")
 
+    @logger
     async def get_all_libraries(self) -> List[LibraryResponse]:
         """Get all libraries"""
         try:
@@ -72,6 +75,7 @@ class LibraryService:
         except Exception as e:
             raise DatabaseError(f"Failed to fetch libraries: {str(e)}")
 
+    @logger
     async def update_library(self, library_id: str, data: LibraryUpdate) -> LibraryResponse:
         """Update library"""
         try:
@@ -99,6 +103,7 @@ class LibraryService:
         except Exception as e:
             raise DatabaseError(f"Failed to update library: {str(e)}")
 
+    @logger
     async def delete_library(self, library_id: str) -> None:
         """Delete library and all its chunks/documents"""
         try:
@@ -115,6 +120,7 @@ class LibraryService:
         except Exception as e:
             raise DatabaseError(f"Failed to delete library: {str(e)}")
 
+    @logger
     async def library_exists(self, library_id: str) -> bool:
         """Check if library exists"""
         try:
@@ -122,6 +128,7 @@ class LibraryService:
         except Exception as e:
             raise DatabaseError(f"Failed to check library existence: {str(e)}")
 
+    @logger
     async def get_library_stats(self) -> dict:
         """Get aggregated library statistics"""
         try:
@@ -129,6 +136,7 @@ class LibraryService:
         except Exception as e:
             raise DatabaseError(f"Failed to fetch library statistics: {str(e)}")
 
+    @logger
     async def mark_library_indexed(self, library_id: str) -> None:
         """Mark library as indexed (all chunks have embeddings)"""
         try:
@@ -144,6 +152,7 @@ class LibraryService:
         except Exception as e:
             raise DatabaseError(f"Failed to mark library as indexed: {str(e)}")
 
+    @logger
     async def mark_library_unindexed(self, library_id: str) -> None:
         """Mark library as not indexed"""
         try:
