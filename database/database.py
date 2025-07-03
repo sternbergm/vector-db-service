@@ -3,7 +3,7 @@ import os
 from .models import Base
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)  # Force override existing env vars
 
 # Database URL - using asyncpg for PostgreSQL async support
 DATABASE_URL = os.getenv("DATABASE_URL")
