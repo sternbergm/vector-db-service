@@ -11,7 +11,7 @@ class DocumentRepository:
 
     @logger
     @timer
-    async def create_or_get(self, library_id: str, metadata: DocumentMetadata = None) -> Document:
+    async def create_or_get(self, library_id: str, metadata: Optional[DocumentMetadata] = None) -> Document:
         """Create a new document or get existing one based on metadata similarity"""
         # For auto-management, we could group by title if provided
         if metadata and metadata.title:
@@ -46,7 +46,7 @@ class DocumentRepository:
         result = await self.db.execute(
             select(Document).where(Document.library_id == library_id)
         )
-        return result.scalars().all()
+        return list(result.scalars().all())
     
     
     @logger
@@ -112,8 +112,6 @@ class DocumentRepository:
             update_values["title"] = metadata.title
         if metadata.author is not None:
             update_values["author"] = metadata.author
-        if metadata.extra:
-            update_values["extra_metadata"] = metadata.extra
         
         if update_values:
             result = await self.db.execute(

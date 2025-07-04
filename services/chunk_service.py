@@ -70,6 +70,18 @@ class ChunkService:
             raise DatabaseError(f"Failed to fetch chunk: {str(e)}")
 
     @logger
+    async def get_chunks_batch(self, chunk_ids: List[str]) -> List[ChunkResponse]:
+        """Get multiple chunks by their IDs in a single query"""
+        try:
+            if not chunk_ids:
+                return []
+            
+            chunks = await self.chunk_repository.get_chunks_batch(chunk_ids)
+            return [self._build_chunk_response(chunk) for chunk in chunks]
+        except Exception as e:
+            raise DatabaseError(f"Failed to fetch chunks batch: {str(e)}")
+
+    @logger
     async def get_chunks_by_library(self, library_id: str) -> List[ChunkResponse]:
         """Get all chunks in a library"""
         try:
@@ -104,7 +116,7 @@ class ChunkService:
             
             # If text changed, mark library as unindexed
             if data.text is not None:
-                await self.library_repository.mark_unindexed(updated_chunk.library_id)
+                await self.library_repository.mark_unindexed(str(updated_chunk.library_id))
             
             return self._build_chunk_response(updated_chunk)
         except ChunkNotFoundError:

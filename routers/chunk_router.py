@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, status, Path
+from fastapi import APIRouter, HTTPException, Depends, status, Path, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Annotated, List, Optional
 from pydantic import BaseModel
@@ -12,6 +12,15 @@ from database.database import get_db
 from schemas.chunk_schema import ChunkCreate, ChunkUpdate, ChunkResponse, ChunkMetadata
 from exceptions import ChunkNotFoundError, LibraryNotFoundError, DatabaseError, ValidationError, ChunkNotInLibraryError
 from decorators import logger, timer
+
+# Import background tasks and vector service dependency
+from services.background_tasks import (
+    generate_and_index_embedding,
+    update_and_reindex_embedding,
+    remove_from_vector_index
+)
+from services.dependencies import get_vector_service_dependency
+
 # Create a request model without library_id since it comes from the URL
 class ChunkCreateRequest(BaseModel):
     text: str
@@ -33,9 +42,11 @@ router = APIRouter(prefix="/libraries/{library_id}/chunks", tags=["chunks"])
 async def create_chunk(
     library_id: Annotated[UUID, Path(description="The UUID of the library")],
     chunk_data: ChunkCreateRequest,
-    chunk_service: chunk_service_dependency
+    background_tasks: BackgroundTasks,
+    chunk_service: chunk_service_dependency,
+    vector_service = Depends(get_vector_service_dependency)
 ):
-    """Create a new chunk in the specified library"""
+    """Create a new chunk in the specified library with background embedding generation"""
     try:
         # Create the full ChunkCreate object with library_id from URL
         full_chunk_data = ChunkCreate(
@@ -45,7 +56,12 @@ async def create_chunk(
             metadata=chunk_data.metadata
         )
         
+        # 1. Create chunk in database
         chunk = await chunk_service.create_chunk(full_chunk_data)
+        
+        # 2. Add background task to generate embedding and add to vector index
+        background_tasks.add_task(generate_and_index_embedding, chunk, vector_service)
+        
         return chunk
     except LibraryNotFoundError as e:
         raise HTTPException(
@@ -120,15 +136,22 @@ async def update_chunk(
     library_id: Annotated[UUID, Path(description="The UUID of the library")],
     chunk_id: Annotated[UUID, Path(description="The UUID of the chunk")],
     update_data: ChunkUpdate,
-    chunk_service: chunk_service_dependency
+    background_tasks: BackgroundTasks,
+    chunk_service: chunk_service_dependency,
+    vector_service = Depends(get_vector_service_dependency)
 ):
-    """Update chunk"""
+    """Update chunk with background embedding re-generation if text changed"""
     try:
         # First verify the chunk exists and belongs to the library
         await chunk_service.verify_chunk_in_library(str(chunk_id), str(library_id))
         
-        # Then update the chunk
+        # Update the chunk
         chunk = await chunk_service.update_chunk(str(chunk_id), update_data)
+        
+        # If text was updated, trigger background embedding update
+        if update_data.text is not None:
+            background_tasks.add_task(update_and_reindex_embedding, chunk, vector_service)
+        
         return chunk
     except ChunkNotFoundError as e:
         raise HTTPException(
@@ -157,15 +180,26 @@ async def update_chunk(
 async def delete_chunk(
     library_id: Annotated[UUID, Path(description="The UUID of the library")],
     chunk_id: Annotated[UUID, Path(description="The UUID of the chunk")],
-    chunk_service: chunk_service_dependency
+    background_tasks: BackgroundTasks,
+    chunk_service: chunk_service_dependency,
+    vector_service = Depends(get_vector_service_dependency)
 ):
-    """Delete chunk"""
+    """Delete chunk with background vector index cleanup"""
     try:
         # First verify the chunk exists and belongs to the library
         await chunk_service.verify_chunk_in_library(str(chunk_id), str(library_id))
         
-        # Then delete the chunk
+        # Delete the chunk from database
         await chunk_service.delete_chunk(str(chunk_id))
+        
+        # Add background task to remove from vector index
+        background_tasks.add_task(
+            remove_from_vector_index,
+            str(chunk_id),
+            str(library_id),
+            vector_service
+        )
+        
         return None
     except ChunkNotFoundError as e:
         raise HTTPException(

@@ -39,12 +39,24 @@ class ChunkRepository:
     
     @logger
     @timer
+    async def get_chunks_batch(self, chunk_ids: List[str]) -> List[Chunk]:
+        """Get multiple chunks by their IDs in a single query"""
+        if not chunk_ids:
+            return []
+        
+        result = await self.db.execute(
+            select(Chunk).where(Chunk.id.in_(chunk_ids))
+        )
+        return list(result.scalars().all())
+    
+    @logger
+    @timer
     async def get_by_library(self, library_id: str) -> List[Chunk]:
         """Get all chunks in a library"""
         result = await self.db.execute(
             select(Chunk).where(Chunk.library_id == library_id)
         )
-        return result.scalars().all()
+        return list(result.scalars().all())
     
     @logger
     @timer
@@ -53,7 +65,7 @@ class ChunkRepository:
         result = await self.db.execute(
             select(Chunk).where(Chunk.document_id == document_id)
         )
-        return result.scalars().all()
+        return list(result.scalars().all())
     
     @logger
     @timer
@@ -67,7 +79,7 @@ class ChunkRepository:
                 )
             )
         )
-        return result.scalars().all()
+        return list(result.scalars().all())
     
     @logger
     @timer
@@ -81,7 +93,7 @@ class ChunkRepository:
                 )
             )
         )
-        return result.scalars().all()
+        return list(result.scalars().all())
     
     @logger
     @timer
@@ -210,7 +222,7 @@ class ChunkRepository:
             # This is a simplified version
         
         result = await self.db.execute(query)
-        return result.scalars().all()
+        return list(result.scalars().all())
     
     @logger
     @timer

@@ -37,7 +37,7 @@ class LibraryRepository:
     async def get_all(self) -> List[Library]:
         """Get all libraries"""
         result = await self.db.execute(select(Library))
-        return result.scalars().all()
+        return list(result.scalars().all())
     
     @logger
     @timer

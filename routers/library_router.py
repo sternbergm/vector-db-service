@@ -7,8 +7,12 @@ from services.library_service import LibraryService
 from repositories.library_repository import LibraryRepository
 from database.database import get_db
 from schemas.library_schema import LibraryCreate, LibraryUpdate, LibraryResponse
+from schemas.search_schema import SearchRequest, SearchResponse
 from exceptions import LibraryNotFoundError, DatabaseError, ValidationError
 from decorators import logger, timer
+
+# Import the vector service dependency from dependencies module
+from services.dependencies import get_vector_service_dependency
 
 async def get_library_service(db: AsyncSession = Depends(get_db)) -> LibraryService:
     library_repository = LibraryRepository(db)
@@ -143,15 +147,37 @@ async def get_library_stats(
             detail=e.message
         )
 
-@router.post("/{library_id}/knn-search")
+@router.post("/{library_id}/knn-search", response_model=SearchResponse)
 @logger
 @timer
 async def knn_search(
-    library_id: Annotated[UUID, Path(description="The UUID of the library")]
+    library_id: Annotated[UUID, Path(description="The UUID of the library")],
+    search_request: SearchRequest,
+    vector_service = Depends(get_vector_service_dependency)
 ):
-    """Perform k-NN search (placeholder for vector search implementation)"""
-    # TODO: Implement k-NN search once vector indexing is complete
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Vector search not yet implemented"
-    ) 
+    """Perform k-NN similarity search in the specified library"""
+    try:
+        # Perform the search
+        search_response = await vector_service.search_similar_chunks(
+            query_text=search_request.query,
+            library_id=str(library_id),
+            k=search_request.k
+        )
+        
+        return search_response
+        
+    except LibraryNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=e.message
+        )
+    except ValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=e.message
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Search failed: {str(e)}"
+        ) 
