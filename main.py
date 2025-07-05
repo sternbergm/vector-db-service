@@ -1,27 +1,66 @@
 from fastapi import FastAPI, Depends
 from contextlib import asynccontextmanager
+import asyncio
+import logging
 
 from database.database import create_tables, close_db
 from routers.library_router import router as library_router
 from routers.chunk_router import router as chunk_router
-from services.dependencies import get_vector_service_dependency
+from routers.document_router import router as document_router
+from services.dependencies import get_vector_service_dependency, get_library_service_dependency, get_chunk_service_dependency
+
+# Import background tasks
+from services.background_tasks import initialize_all_library_embeddings_and_indexes
+
+logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     await create_tables()
-    print("Database tables created")
+    logger.info("Database tables created")
     
     # Initialize vector service
     # Note: We'll initialize the vector service on first request to avoid
     # database session issues during startup
-    print("Vector service will be initialized on first request")
+    logger.info("Vector service will be initialized on first request")
+    
+    # Add startup task to initialize embeddings and indexes
+    # We'll run this in the background after a short delay to allow the service to start
+    async def startup_initialization():
+        try:
+            # Wait a bit for the service to fully start
+            await asyncio.sleep(5)
+            
+            logger.info("Starting background initialization of embeddings and indexes...")
+            
+            # Get service instances
+            from services.dependencies import get_vector_service, get_library_service, get_chunk_service
+            
+            vector_service = get_vector_service()
+            library_service = get_library_service()
+            chunk_service = get_chunk_service()
+            
+            # Initialize all library embeddings and indexes
+            await initialize_all_library_embeddings_and_indexes(
+                vector_service=vector_service,
+                library_service=library_service,
+                chunk_service=chunk_service
+            )
+            
+            logger.info("Completed background initialization of embeddings and indexes")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize embeddings and indexes: {str(e)}")
+    
+    # Start the background initialization task
+    asyncio.create_task(startup_initialization())
     
     yield
     
     # Shutdown  
     await close_db()
-    print("Database connection closed")
+    logger.info("Database connection closed")
 
 app = FastAPI(
     title="Vector DB Service",
@@ -32,6 +71,7 @@ app = FastAPI(
 # Include routers
 app.include_router(library_router, prefix="/api")
 app.include_router(chunk_router, prefix="/api")
+app.include_router(document_router, prefix="/api")
 
 @app.get("/health")
 def health():

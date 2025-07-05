@@ -30,6 +30,34 @@ class ChunkRepository:
     
     @logger
     @timer
+    async def batch_create(self, chunk_data_list: List[ChunkCreate]) -> List[Chunk]:
+        """Create multiple chunks in a single transaction"""
+        if not chunk_data_list:
+            return []
+        
+        chunks = []
+        for chunk_data in chunk_data_list:
+            chunk = Chunk(
+                text=chunk_data.text,
+                library_id=chunk_data.library_id,
+                document_id=chunk_data.document_id,
+                source=chunk_data.metadata.source if chunk_data.metadata else None,
+                sentence_number=chunk_data.metadata.sentence_number if chunk_data.metadata else None,
+                extra_metadata=chunk_data.metadata.extra if chunk_data.metadata else {}
+            )
+            chunks.append(chunk)
+            self.db.add(chunk)
+        
+        await self.db.commit()
+        
+        # Refresh all chunks to get their IDs
+        for chunk in chunks:
+            await self.db.refresh(chunk)
+        
+        return chunks
+    
+    @logger
+    @timer
     async def get(self, chunk_id: str) -> Optional[Chunk]:
         """Get chunk by ID"""
         result = await self.db.execute(

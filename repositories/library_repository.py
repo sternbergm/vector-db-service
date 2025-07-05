@@ -2,9 +2,11 @@ from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete
 from sqlalchemy.orm import selectinload
-from database.models import Library
+from database.models import Library, IndexAlgorithmEnum
 from schemas.library_schema import LibraryCreate, LibraryUpdate
+from schemas.search_schema import IndexAlgorithm
 from decorators import logger, timer
+
 class LibraryRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -13,8 +15,14 @@ class LibraryRepository:
     @timer
     async def create(self, library_data: LibraryCreate) -> Library:
         """Create a new library"""
+        # Convert schema IndexAlgorithm to database enum
+        preferred_algo = IndexAlgorithmEnum.FLAT
+        if library_data.preferred_index_algorithm:
+            preferred_algo = IndexAlgorithmEnum(library_data.preferred_index_algorithm.value)
+        
         library = Library(
             name=library_data.name,
+            preferred_index_algorithm=preferred_algo,
             description=library_data.metadata.description if library_data.metadata else None,
             extra_metadata=library_data.metadata.extra if library_data.metadata else {}
         )
@@ -50,6 +58,8 @@ class LibraryRepository:
         # Update fields if provided
         if update_data.name is not None:
             library.name = update_data.name
+        if update_data.preferred_index_algorithm is not None:
+            library.preferred_index_algorithm = IndexAlgorithmEnum(update_data.preferred_index_algorithm.value)
         if update_data.metadata is not None:
             if update_data.metadata.description is not None:
                 library.description = update_data.metadata.description
@@ -79,7 +89,17 @@ class LibraryRepository:
         )
         return result.scalar_one_or_none() is not None
     
-    
+    @logger
+    @timer
+    async def get_preferred_algorithm(self, library_id: str) -> Optional[IndexAlgorithm]:
+        """Get the preferred index algorithm for a library"""
+        result = await self.db.execute(
+            select(Library.preferred_index_algorithm).where(Library.id == library_id)
+        )
+        algorithm_enum = result.scalar_one_or_none()
+        if algorithm_enum:
+            return IndexAlgorithm(algorithm_enum.value)
+        return None
     
     @logger
     @timer

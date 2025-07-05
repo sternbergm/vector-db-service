@@ -51,14 +51,16 @@ class VectorService:
     - Integration with embedding service and vector storage
     """
     
-    def __init__(self, chunk_service: ChunkService):
+    def __init__(self, chunk_service: ChunkService, library_service=None):
         """
         Initialize vector service.
         
         Args:
             chunk_service: Service for chunk database operations
+            library_service: Service for library operations (optional, for circular dependency)
         """
         self.chunk_service = chunk_service
+        self.library_service = library_service
         
         # Library-specific indexes: library_id -> VectorIndex
         self._library_indexes: Dict[str, VectorIndex] = {}
@@ -70,6 +72,10 @@ class VectorService:
         self.default_algorithm = IndexAlgorithm.FLAT
         
         logger.info("VectorService initialized")
+    
+    def set_library_service(self, library_service):
+        """Set library service (for circular dependency resolution)"""
+        self.library_service = library_service
     
     async def add_chunk_vector(self, chunk: ChunkResponse) -> bool:
         """
@@ -172,7 +178,8 @@ class VectorService:
     async def search_similar_chunks(self, 
                                   query_text: str, 
                                   library_id: str, 
-                                  k: int = 10) -> SearchResponse:
+                                  k: int = 10,
+                                  algorithm: Optional[IndexAlgorithm] = None) -> SearchResponse:
         """
         Search for similar chunks in a library.
         
@@ -180,6 +187,7 @@ class VectorService:
             query_text: Text to search for
             library_id: Library to search in
             k: Number of top results to return
+            algorithm: Optional algorithm to use (uses library's preferred if None)
             
         Returns:
             SearchResponse: Complete search response with results and metadata
@@ -191,7 +199,16 @@ class VectorService:
         start_time = time.time()
         
         try:
-            # 1. Check if library has an index
+            # 1. Determine algorithm to use
+            if algorithm is None and self.library_service:
+                try:
+                    algorithm = await self.library_service.get_preferred_algorithm(library_id)
+                except LibraryNotFoundError:
+                    algorithm = self.default_algorithm
+            elif algorithm is None:
+                algorithm = self.default_algorithm
+            
+            # 2. Check if library has an index or build one
             if library_id not in self._library_indexes:
                 # Try to build index if library exists and has chunks
                 chunk_ids = vector_storage.filter_by_library(library_id)
@@ -205,17 +222,23 @@ class VectorService:
                         search_time_ms=(time.time() - start_time) * 1000
                     )
                 
-                # Build index with default algorithm
-                await self._rebuild_library_index(library_id)
+                # Build index with specified algorithm
+                await self._rebuild_library_index(library_id, algorithm)
             
-            # 2. Generate query embedding
+            # 3. Check if we need to rebuild with different algorithm
+            current_algorithm = self._library_algorithms.get(library_id, self.default_algorithm)
+            if current_algorithm != algorithm:
+                logger.info(f"Rebuilding index for library {library_id} with algorithm {algorithm.value if algorithm else 'default'}")
+                await self._rebuild_library_index(library_id, algorithm)
+            
+            # 4. Generate query embedding
             query_embedding = await embedding_service.generate_query_embedding(query_text)
             
-            # 3. Search using library index
+            # 5. Search using library index
             index = self._library_indexes[library_id]
             raw_results = index.search(query_embedding, k)
             
-            # 4. Convert raw results to SearchResult objects with full chunk data using batch fetch
+            # 6. Convert raw results to SearchResult objects with full chunk data using batch fetch
             search_results = []
             if raw_results:
                 # Extract chunk IDs and create similarity score mapping
@@ -241,12 +264,12 @@ class VectorService:
                 if missing_chunk_ids:
                     logger.warning(f"Chunks {missing_chunk_ids} found in index but not in database")
             
-            # 5. Sort results by similarity score (highest first)
+            # 7. Sort results by similarity score (highest first)
             search_results.sort(key=lambda x: x.similarity_score, reverse=True)
             
             search_time_ms = (time.time() - start_time) * 1000
             
-            logger.info(f"Found {len(search_results)} similar chunks in library {library_id} in {search_time_ms:.1f}ms")
+            logger.info(f"Found {len(search_results)} similar chunks in library {library_id} using {algorithm.value if algorithm else 'default'} in {search_time_ms:.1f}ms")
             
             return SearchResponse(
                 query=query_text,
@@ -425,8 +448,8 @@ def get_vector_service() -> VectorService:
         raise RuntimeError("VectorService not initialized. Call initialize_vector_service() first.")
     return vector_service
 
-def initialize_vector_service(chunk_service: ChunkService) -> VectorService:
+def initialize_vector_service(chunk_service: ChunkService, library_service=None) -> VectorService:
     """Initialize the global vector service instance."""
     global vector_service
-    vector_service = VectorService(chunk_service)
+    vector_service = VectorService(chunk_service, library_service)
     return vector_service 

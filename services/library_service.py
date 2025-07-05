@@ -1,8 +1,10 @@
 from typing import List, Optional
 from repositories import LibraryRepository
 from schemas.library_schema import LibraryCreate, LibraryUpdate, LibraryResponse, LibraryMetadata
+from schemas.search_schema import IndexAlgorithm
 from exceptions import LibraryNotFoundError, DatabaseError
 from decorators import logger
+
 class LibraryService:
     def __init__(self, library_repository: LibraryRepository):
         self.library_repository = library_repository
@@ -18,6 +20,7 @@ class LibraryService:
                 id=str(library.id),
                 name=library.name,
                 indexed=library.indexed,
+                preferred_index_algorithm=IndexAlgorithm(library.preferred_index_algorithm.value),
                 metadata=LibraryMetadata(
                     description=library.description,
                     created_at=library.created_at,
@@ -40,6 +43,7 @@ class LibraryService:
                 id=str(library.id),
                 name=library.name,
                 indexed=library.indexed,
+                preferred_index_algorithm=IndexAlgorithm(library.preferred_index_algorithm.value),
                 metadata=LibraryMetadata(
                     description=library.description,
                     created_at=library.created_at,
@@ -63,6 +67,7 @@ class LibraryService:
                     id=str(library.id),
                     name=library.name,
                     indexed=library.indexed,
+                    preferred_index_algorithm=IndexAlgorithm(library.preferred_index_algorithm.value),
                     metadata=LibraryMetadata(
                         description=library.description,
                         created_at=library.created_at,
@@ -91,6 +96,7 @@ class LibraryService:
                 id=str(library.id),
                 name=library.name,
                 indexed=library.indexed,
+                preferred_index_algorithm=IndexAlgorithm(library.preferred_index_algorithm.value),
                 metadata=LibraryMetadata(
                     description=library.description,
                     created_at=library.created_at,
@@ -135,6 +141,19 @@ class LibraryService:
             return await self.library_repository.get_stats()
         except Exception as e:
             raise DatabaseError(f"Failed to fetch library statistics: {str(e)}")
+
+    @logger
+    async def get_preferred_algorithm(self, library_id: str) -> IndexAlgorithm:
+        """Get the preferred index algorithm for a library"""
+        try:
+            algorithm = await self.library_repository.get_preferred_algorithm(library_id)
+            if algorithm is None:
+                raise LibraryNotFoundError(library_id)
+            return algorithm
+        except LibraryNotFoundError:
+            raise
+        except Exception as e:
+            raise DatabaseError(f"Failed to get preferred algorithm: {str(e)}")
 
     @logger
     async def mark_library_indexed(self, library_id: str) -> None:
