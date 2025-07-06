@@ -12,8 +12,8 @@ from vector_db.algorithms import VectorIndex, FlatIndex, LSHIndex, GridIndex
 from schemas.chunk_schema import ChunkResponse, ChunkMetadata
 from schemas.search_schema import IndexAlgorithm, SearchResponse, SearchResult, LibraryIndexInfo
 from exceptions import LibraryNotFoundError, ChunkNotFoundError, DatabaseError
-
-logger = logging.getLogger(__name__)
+from decorators import logger, timer
+class_logger = logging.getLogger(__name__)
 
 
 class VectorIndexConfig:
@@ -51,14 +51,16 @@ class VectorService:
     - Integration with embedding service and vector storage
     """
     
-    def __init__(self, chunk_service: ChunkService):
+    def __init__(self, chunk_service: ChunkService, library_service=None):
         """
         Initialize vector service.
         
         Args:
             chunk_service: Service for chunk database operations
+            library_service: Service for library operations (optional, for circular dependency)
         """
         self.chunk_service = chunk_service
+        self.library_service = library_service
         
         # Library-specific indexes: library_id -> VectorIndex
         self._library_indexes: Dict[str, VectorIndex] = {}
@@ -69,8 +71,14 @@ class VectorService:
         # Default algorithm for new libraries
         self.default_algorithm = IndexAlgorithm.FLAT
         
-        logger.info("VectorService initialized")
+        class_logger.info("VectorService initialized")
     
+    def set_library_service(self, library_service):
+        """Set library service (for circular dependency resolution)"""
+        self.library_service = library_service
+    
+    @logger
+    @timer
     async def add_chunk_vector(self, chunk: ChunkResponse) -> bool:
         """
         Add a chunk vector to the library index.
@@ -92,22 +100,24 @@ class VectorService:
             # 2. Add to vector storage
             success = vector_storage.add_vector(chunk.id, embedding, chunk.library_id, chunk.metadata)
             if not success:
-                logger.error(f"Failed to add vector to storage for chunk {chunk.id}")
+                class_logger.error(f"Failed to add vector to storage for chunk {chunk.id}")
                 return False
             
             # 3. Rebuild library index
             await self._rebuild_library_index(chunk.library_id)
             
-            logger.info(f"Added vector for chunk {chunk.id} to library {chunk.library_id}")
+            class_logger.info(f"Added vector for chunk {chunk.id} to library {chunk.library_id}")
             return True
             
         except EmbeddingError:
-            logger.error(f"Failed to generate embedding for chunk {chunk.id}")
+            class_logger.error(f"Failed to generate embedding for chunk {chunk.id}")
             raise
         except Exception as e:
-            logger.error(f"Failed to add chunk vector {chunk.id}: {str(e)}")
+            class_logger.error(f"Failed to add chunk vector {chunk.id}: {str(e)}")
             return False
     
+    @logger
+    @timer
     async def update_chunk_vector(self, chunk: ChunkResponse) -> bool:
         """
         Update a chunk vector in the library index.
@@ -126,22 +136,24 @@ class VectorService:
             vector_storage.remove_vector(chunk.id)
             success = vector_storage.add_vector(chunk.id, embedding, chunk.library_id, chunk.metadata)
             if not success:
-                logger.error(f"Failed to update vector in storage for chunk {chunk.id}")
+                class_logger.error(f"Failed to update vector in storage for chunk {chunk.id}")
                 return False
             
             # 3. Rebuild library index
             await self._rebuild_library_index(chunk.library_id)
             
-            logger.info(f"Updated vector for chunk {chunk.id} in library {chunk.library_id}")
+            class_logger.info(f"Updated vector for chunk {chunk.id} in library {chunk.library_id}")
             return True
             
         except EmbeddingError:
-            logger.error(f"Failed to generate embedding for updated chunk {chunk.id}")
+            class_logger.error(f"Failed to generate embedding for updated chunk {chunk.id}")
             raise
         except Exception as e:
-            logger.error(f"Failed to update chunk vector {chunk.id}: {str(e)}")
+            class_logger.error(f"Failed to update chunk vector {chunk.id}: {str(e)}")
             return False
     
+    @logger
+    @timer
     async def remove_chunk_vector(self, chunk_id: str, library_id: str) -> bool:
         """
         Remove a chunk vector from the library index.
@@ -157,22 +169,25 @@ class VectorService:
             # 1. Remove from vector storage
             success = vector_storage.remove_vector(chunk_id)
             if not success:
-                logger.warning(f"Chunk {chunk_id} not found in vector storage")
+                class_logger.warning(f"Chunk {chunk_id} not found in vector storage")
             
             # 2. Rebuild library index
             await self._rebuild_library_index(library_id)
             
-            logger.info(f"Removed vector for chunk {chunk_id} from library {library_id}")
+            class_logger.info(f"Removed vector for chunk {chunk_id} from library {library_id}")
             return True
             
         except Exception as e:
-            logger.error(f"Failed to remove chunk vector {chunk_id}: {str(e)}")
+            class_logger.error(f"Failed to remove chunk vector {chunk_id}: {str(e)}")
             return False
     
+    @logger
+    @timer
     async def search_similar_chunks(self, 
                                   query_text: str, 
                                   library_id: str, 
-                                  k: int = 10) -> SearchResponse:
+                                  k: int = 10,
+                                  algorithm: Optional[IndexAlgorithm] = None) -> SearchResponse:
         """
         Search for similar chunks in a library.
         
@@ -180,6 +195,7 @@ class VectorService:
             query_text: Text to search for
             library_id: Library to search in
             k: Number of top results to return
+            algorithm: Optional algorithm to use (uses library's preferred if None)
             
         Returns:
             SearchResponse: Complete search response with results and metadata
@@ -191,12 +207,21 @@ class VectorService:
         start_time = time.time()
         
         try:
-            # 1. Check if library has an index
+            # 1. Determine algorithm to use
+            if algorithm is None and self.library_service:
+                try:
+                    algorithm = await self.library_service.get_preferred_algorithm(library_id)
+                except LibraryNotFoundError:
+                    algorithm = self.default_algorithm
+            elif algorithm is None:
+                algorithm = self.default_algorithm
+            
+            # 2. Check if library has an index or build one
             if library_id not in self._library_indexes:
                 # Try to build index if library exists and has chunks
                 chunk_ids = vector_storage.filter_by_library(library_id)
                 if not chunk_ids:
-                    logger.warning(f"Library {library_id} has no chunks for search")
+                    class_logger.warning(f"Library {library_id} has no chunks for search")
                     return SearchResponse(
                         query=query_text,
                         library_id=library_id,
@@ -205,17 +230,24 @@ class VectorService:
                         search_time_ms=(time.time() - start_time) * 1000
                     )
                 
-                # Build index with default algorithm
-                await self._rebuild_library_index(library_id)
+                class_logger.info(f"Building index for library {library_id} with algorithm {algorithm.value if algorithm else 'default'}")
+                # Build index with specified algorithm
+                await self._rebuild_library_index(library_id, algorithm)
             
-            # 2. Generate query embedding
+            # 3. Check if we need to rebuild with different algorithm
+            current_algorithm = self._library_algorithms.get(library_id, self.default_algorithm)
+            if current_algorithm != algorithm:
+                class_logger.info(f"Rebuilding index for library {library_id} with algorithm {algorithm.value if algorithm else 'default'}")
+                await self._rebuild_library_index(library_id, algorithm)
+            
+            # 4. Generate query embedding
             query_embedding = await embedding_service.generate_query_embedding(query_text)
             
-            # 3. Search using library index
+            # 5. Search using library index
             index = self._library_indexes[library_id]
             raw_results = index.search(query_embedding, k)
             
-            # 4. Convert raw results to SearchResult objects with full chunk data using batch fetch
+            # 6. Convert raw results to SearchResult objects with full chunk data using batch fetch
             search_results = []
             if raw_results:
                 # Extract chunk IDs and create similarity score mapping
@@ -239,14 +271,14 @@ class VectorService:
                 found_chunk_ids = {chunk.id for chunk in chunks}
                 missing_chunk_ids = set(chunk_ids) - found_chunk_ids
                 if missing_chunk_ids:
-                    logger.warning(f"Chunks {missing_chunk_ids} found in index but not in database")
+                    class_logger.warning(f"Chunks {missing_chunk_ids} found in index but not in database")
             
-            # 5. Sort results by similarity score (highest first)
+            # 7. Sort results by similarity score (highest first)
             search_results.sort(key=lambda x: x.similarity_score, reverse=True)
             
             search_time_ms = (time.time() - start_time) * 1000
             
-            logger.info(f"Found {len(search_results)} similar chunks in library {library_id} in {search_time_ms:.1f}ms")
+            class_logger.info(f"Found {len(search_results)} similar chunks in library {library_id} using {algorithm.value if algorithm else 'default'} in {search_time_ms:.1f}ms")
             
             return SearchResponse(
                 query=query_text,
@@ -257,10 +289,10 @@ class VectorService:
             )
             
         except EmbeddingError:
-            logger.error(f"Failed to generate query embedding: {query_text}")
+            class_logger.error(f"Failed to generate query embedding: {query_text}")
             raise
         except Exception as e:
-            logger.error(f"Failed to search library {library_id}: {str(e)}")
+            class_logger.error(f"Failed to search library {library_id}: {str(e)}")
             # Return empty response on error
             return SearchResponse(
                 query=query_text,
@@ -270,6 +302,8 @@ class VectorService:
                 search_time_ms=(time.time() - start_time) * 1000
             )
     
+    @logger
+    @timer
     async def set_library_algorithm(self, 
                                   library_id: str, 
                                   algorithm: IndexAlgorithm,
@@ -289,7 +323,7 @@ class VectorService:
             # 1. Remove old index if exists
             if library_id in self._library_indexes:
                 del self._library_indexes[library_id]
-                logger.info(f"Removed old index for library {library_id}")
+                class_logger.info(f"Removed old index for library {library_id}")
             
             # 2. Update algorithm tracking
             self._library_algorithms[library_id] = algorithm
@@ -297,13 +331,15 @@ class VectorService:
             # 3. Rebuild index with new algorithm
             await self._rebuild_library_index(library_id, algorithm, **algorithm_params)
             
-            logger.info(f"Set library {library_id} to use {algorithm.value} algorithm")
+            class_logger.info(f"Set library {library_id} to use {algorithm.value} algorithm")
             return True
             
         except Exception as e:
-            logger.error(f"Failed to set algorithm for library {library_id}: {str(e)}")
+            class_logger.error(f"Failed to set algorithm for library {library_id}: {str(e)}")
             return False
     
+    @logger
+    @timer
     async def _rebuild_library_index(self, 
                                    library_id: str, 
                                    algorithm: Optional[IndexAlgorithm] = None,
@@ -323,7 +359,7 @@ class VectorService:
                 # No chunks - remove index if exists
                 if library_id in self._library_indexes:
                     del self._library_indexes[library_id]
-                logger.info(f"No chunks in library {library_id}, removed index")
+                class_logger.info(f"No chunks in library {library_id}, removed index")
                 return
             
             # 2. Determine algorithm to use
@@ -340,12 +376,14 @@ class VectorService:
             self._library_indexes[library_id] = index
             self._library_algorithms[library_id] = algorithm
             
-            logger.info(f"Rebuilt {algorithm.value} index for library {library_id} with {len(chunk_ids)} chunks")
+            class_logger.info(f"Rebuilt {algorithm.value} index for library {library_id} with {len(chunk_ids)} chunks")
             
         except Exception as e:
-            logger.error(f"Failed to rebuild index for library {library_id}: {str(e)}")
+            class_logger.error(f"Failed to rebuild index for library {library_id}: {str(e)}")
             raise
     
+    @logger
+    @timer
     async def get_library_index_info(self, library_id: str) -> Optional[LibraryIndexInfo]:
         """
         Get information about a library's index.
@@ -374,6 +412,8 @@ class VectorService:
             index_stats=index_stats
         )
     
+    @logger
+    @timer
     async def get_all_library_indexes_info(self) -> Dict[str, LibraryIndexInfo]:
         """Get information about all library indexes."""
         info = {}
@@ -383,6 +423,8 @@ class VectorService:
                 info[library_id] = library_info
         return info
     
+    @logger
+    @timer
     async def delete_library_index(self, library_id: str) -> bool:
         """
         Delete a library's index and all its vectors.
@@ -407,11 +449,11 @@ class VectorService:
             if library_id in self._library_algorithms:
                 del self._library_algorithms[library_id]
             
-            logger.info(f"Deleted index and vectors for library {library_id}")
+            class_logger.info(f"Deleted index and vectors for library {library_id}")
             return True
             
         except Exception as e:
-            logger.error(f"Failed to delete library index {library_id}: {str(e)}")
+            class_logger.error(f"Failed to delete library index {library_id}: {str(e)}")
             return False
 
 
@@ -425,8 +467,8 @@ def get_vector_service() -> VectorService:
         raise RuntimeError("VectorService not initialized. Call initialize_vector_service() first.")
     return vector_service
 
-def initialize_vector_service(chunk_service: ChunkService) -> VectorService:
+def initialize_vector_service(chunk_service: ChunkService, library_service=None) -> VectorService:
     """Initialize the global vector service instance."""
     global vector_service
-    vector_service = VectorService(chunk_service)
+    vector_service = VectorService(chunk_service, library_service)
     return vector_service 

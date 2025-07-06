@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Integer, Boolean, DateTime, Text, ForeignKey, JSON
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, Text, ForeignKey, JSON, Enum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -6,6 +6,12 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import DeclarativeBase
 import uuid
 from typing import Optional
+import enum
+
+class IndexAlgorithmEnum(str, enum.Enum):
+    FLAT = "flat"
+    LSH = "lsh"
+    GRID = "grid"
 
 class Base(DeclarativeBase):
     pass
@@ -19,6 +25,11 @@ class Library(Base):
     # Basic fields
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     indexed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    preferred_index_algorithm: Mapped[IndexAlgorithmEnum] = mapped_column(
+        Enum(IndexAlgorithmEnum), 
+        default=IndexAlgorithmEnum.FLAT, 
+        nullable=False
+    )
     
     # Metadata fields
     description: Mapped[Optional[str]] = mapped_column(Text)

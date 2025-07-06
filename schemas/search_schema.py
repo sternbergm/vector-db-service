@@ -16,6 +16,10 @@ class SearchRequest(BaseModel):
     """Request model for k-NN similarity search."""
     query: str = Field(..., description="Text to search for", min_length=1)
     k: int = Field(default=10, description="Number of top results to return", ge=1, le=100)
+    algorithm: Optional[IndexAlgorithm] = Field(
+        default=None, 
+        description="Optional algorithm to use for search (uses library's preferred if not specified)"
+    )
 
 
 class SearchResult(BaseModel):

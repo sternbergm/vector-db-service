@@ -8,8 +8,8 @@ import time
 import cohere
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import numpy as np
-
-logger = logging.getLogger(__name__)
+from decorators import logger, timer
+class_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -65,7 +65,7 @@ class EmbeddingService:
         if not self.config.api_key:
             raise EmbeddingError("Cohere API key is required. Set COHERE_API_KEY environment variable.")
         
-        logger.info(f"EmbeddingService initialized with model: {self.config.model}")
+        class_logger.info(f"EmbeddingService initialized with model: {self.config.model}")
     
     def _load_config_from_env(self) -> EmbeddingConfig:
         """Load configuration from environment variables."""
@@ -98,10 +98,12 @@ class EmbeddingService:
         # But we keep this for consistency with async patterns
         self._client = None
     
+    @logger
+    @timer
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=4, max=10),
-        retry=retry_if_exception_type((EmbeddingAPIError, EmbeddingRateLimitError, cohere.CohereAPIError))
+        retry=retry_if_exception_type((EmbeddingAPIError, EmbeddingRateLimitError))
     )
     async def _call_cohere_api(self, texts: List[str]) -> List[List[float]]:
         """
@@ -147,22 +149,24 @@ class EmbeddingService:
             if len(embeddings) != len(texts):
                 raise EmbeddingAPIError(f"Expected {len(texts)} embeddings, got {len(embeddings)}")
             
-            logger.debug(f"Successfully generated {len(embeddings)} embeddings")
+            class_logger.debug(f"Successfully generated {len(embeddings)} embeddings")
             return embeddings
             
         except cohere.CohereAPIError as e:
             error_msg = str(e)
             if "rate limit" in error_msg.lower() or "too many requests" in error_msg.lower():
-                logger.warning(f"Rate limited: {e}")
+                class_logger.warning(f"Rate limited: {e}")
                 await asyncio.sleep(self.config.rate_limit_delay)
                 raise EmbeddingRateLimitError("Rate limit exceeded")
             else:
-                logger.error(f"Cohere API error: {e}")
+                class_logger.error(f"Cohere API error: {e}")
                 raise EmbeddingAPIError(f"API error: {e}")
         except Exception as e:
-            logger.error(f"Unexpected error calling Cohere API: {e}")
+            class_logger.error(f"Unexpected error calling Cohere API: {e}")
             raise EmbeddingAPIError(f"Unexpected error: {e}")
     
+    @logger
+    @timer
     async def generate_embedding(self, text: str) -> np.ndarray:
         """
         Generate embedding for a single text.
@@ -182,6 +186,8 @@ class EmbeddingService:
         embeddings = await self._call_cohere_api([text])
         return np.array(embeddings[0], dtype=np.float32)
     
+
+    @timer
     async def generate_embeddings_batch(self, texts: List[str]) -> List[np.ndarray]:
         """
         Generate embeddings for multiple texts in batches.
@@ -218,11 +224,13 @@ class EmbeddingService:
             batch_arrays = [np.array(emb, dtype=np.float32) for emb in batch_embeddings]
             all_embeddings.extend(batch_arrays)
             
-            logger.debug(f"Processed batch {i//self.config.batch_size + 1}: {len(batch)} texts")
+            class_logger.debug(f"Processed batch {i//self.config.batch_size + 1}: {len(batch)} texts")
         
-        logger.info(f"Generated {len(all_embeddings)} embeddings for {len(texts)} texts")
+        class_logger.info(f"Generated {len(all_embeddings)} embeddings for {len(texts)} texts")
         return all_embeddings
     
+    @logger
+    @timer
     async def generate_query_embedding(self, query_text: str) -> np.ndarray:
         """
         Generate embedding for a search query.
