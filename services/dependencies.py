@@ -2,7 +2,7 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.database import get_db
-from services.vector_service import initialize_vector_service, get_vector_service
+from services.vector_service import initialize_vector_service
 from services.chunk_service import ChunkService
 from services.library_service import LibraryService
 from repositories.chunk_repository import ChunkRepository
@@ -50,19 +50,4 @@ async def get_chunk_service_dependency(db: AsyncSession = Depends(get_db)):
         # This will be initialized in get_vector_service_dependency
         await get_vector_service_dependency(db)
     
-    return chunk_service_instance
-
-def get_vector_service():
-    """Get the vector service instance (non-async)."""
-    global vector_service_instance
-    return vector_service_instance
-
-def get_library_service():
-    """Get the library service instance (non-async)."""
-    global library_service_instance
-    return library_service_instance
-
-def get_chunk_service():
-    """Get the chunk service instance (non-async)."""
-    global chunk_service_instance
     return chunk_service_instance 

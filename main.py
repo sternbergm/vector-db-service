@@ -2,8 +2,9 @@ from fastapi import FastAPI, Depends
 from contextlib import asynccontextmanager
 import asyncio
 import logging
+from sqlalchemy import text
 
-from database.database import create_tables, close_db
+from database.database import create_tables, close_db, AsyncSessionLocal
 from routers.library_router import router as library_router
 from routers.chunk_router import router as chunk_router
 from routers.document_router import router as document_router
@@ -20,38 +21,70 @@ async def lifespan(app: FastAPI):
     await create_tables()
     logger.info("Database tables created")
     
-    # Initialize vector service
-    # Note: We'll initialize the vector service on first request to avoid
-    # database session issues during startup
-    logger.info("Vector service will be initialized on first request")
-    
     # Add startup task to initialize embeddings and indexes
     # We'll run this in the background after a short delay to allow the service to start
     async def startup_initialization():
         try:
             # Wait a bit for the service to fully start
-            await asyncio.sleep(5)
+            await asyncio.sleep(1)
             
             logger.info("Starting background initialization of embeddings and indexes...")
             
-            # Get service instances
-            from services.dependencies import get_vector_service, get_library_service, get_chunk_service
+            # Create a temporary database session for initialization
+            db_session = AsyncSessionLocal()
             
-            vector_service = get_vector_service()
-            library_service = get_library_service()
-            chunk_service = get_chunk_service()
-            
-            # Initialize all library embeddings and indexes
-            await initialize_all_library_embeddings_and_indexes(
-                vector_service=vector_service,
-                library_service=library_service,
-                chunk_service=chunk_service
-            )
-            
-            logger.info("Completed background initialization of embeddings and indexes")
-            
+            try:
+                # Test database connectivity
+                logger.info("Testing database connectivity...")
+                await db_session.execute(text("SELECT 1"))
+                logger.info("Database connectivity confirmed")
+                
+                # Initialize services using the SAME pattern as the dependency injection
+                # This ensures we're working with the same global instances
+                from repositories.chunk_repository import ChunkRepository
+                from repositories.document_repository import DocumentRepository
+                from repositories.library_repository import LibraryRepository
+                from services.chunk_service import ChunkService
+                from services.library_service import LibraryService
+                from services.vector_service import initialize_vector_service
+                
+                # Create repositories and services - SAME as dependency injection
+                chunk_repository = ChunkRepository(db_session)
+                document_repository = DocumentRepository(db_session)
+                library_repository = LibraryRepository(db_session)
+                
+                chunk_service = ChunkService(chunk_repository, document_repository, library_repository)
+                library_service = LibraryService(library_repository)
+                
+                # Initialize the GLOBAL vector service (this sets the global instance)
+                vector_service = initialize_vector_service(chunk_service, library_service)
+                
+                # ALSO set the global instances in dependencies.py to match
+                import services.dependencies as deps
+                deps.vector_service_instance = vector_service
+                deps.library_service_instance = library_service
+                deps.chunk_service_instance = chunk_service
+                
+                logger.info("Global services initialized for startup, calling background initialization...")
+                
+                # Initialize all library embeddings and indexes
+                await initialize_all_library_embeddings_and_indexes(
+                    vector_service=vector_service,
+                    library_service=library_service,
+                    chunk_service=chunk_service
+                )
+                
+                logger.info("Completed background initialization of embeddings and indexes")
+                
+            finally:
+                # Always close the database session
+                await db_session.close()
+                logger.info("Startup database session closed")
+                
         except Exception as e:
             logger.error(f"Failed to initialize embeddings and indexes: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
     
     # Start the background initialization task
     asyncio.create_task(startup_initialization())

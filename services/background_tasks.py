@@ -218,25 +218,35 @@ async def initialize_all_library_embeddings_and_indexes(vector_service: VectorSe
         logger.info("Starting initialization of all library embeddings and indexes")
         
         # Get all libraries
+        logger.info("Getting all libraries from database...")
         libraries = await library_service.get_all_libraries()
+        logger.info(f"Found {len(libraries)} libraries in database")
+        
+        if not libraries:
+            logger.warning("No libraries found in database during startup initialization")
+            return
         
         for library in libraries:
             try:
                 library_id = library.id
-                logger.info(f"Processing library {library_id}")
+                logger.info(f"Processing library {library_id} - {library.name}")
                 
                 # Get all chunks for this library
+                logger.info(f"Getting chunks for library {library_id}...")
                 all_chunks = await chunk_service.get_chunks_by_library(library_id)
+                logger.info(f"Found {len(all_chunks)} total chunks in library {library_id}")
                 
                 if not all_chunks:
-                    logger.info(f"No chunks found in library {library_id}")
+                    logger.info(f"No chunks found in library {library_id}, skipping")
                     continue
                 
                 # Get unindexed chunks
+                logger.info(f"Getting unindexed chunks for library {library_id}...")
                 unindexed_chunks = await chunk_service.get_unindexed_chunks(library_id)
+                logger.info(f"Found {len(unindexed_chunks)} unindexed chunks in library {library_id}")
                 
                 if unindexed_chunks:
-                    logger.info(f"Found {len(unindexed_chunks)} unindexed chunks in library {library_id}")
+                    logger.info(f"Processing {len(unindexed_chunks)} unindexed chunks in library {library_id}")
                     
                     # Process unindexed chunks in batch
                     await batch_process_unindexed_chunks(library_id, unindexed_chunks, vector_service)
@@ -246,18 +256,38 @@ async def initialize_all_library_embeddings_and_indexes(vector_service: VectorSe
                 logger.info(f"Creating {preferred_algorithm.value} index for library {library_id}")
                 
                 success = await vector_service.set_library_algorithm(library_id, preferred_algorithm)
+                logger.info(f"Index creation result for library {library_id}: {success}")
                 
                 if success:
                     await library_service.mark_library_indexed(library_id)
                     logger.info(f"Successfully initialized library {library_id}")
+                    
+                    # VERIFY: Check if index is actually accessible
+                    index_info = await vector_service.get_library_index_info(library_id)
+                    if index_info:
+                        logger.info(f"VERIFICATION: Index for library {library_id} is accessible - {index_info.algorithm} with {index_info.vector_count} vectors")
+                    else:
+                        logger.warning(f"VERIFICATION FAILED: Index for library {library_id} is not accessible after creation!")
+                        
                 else:
                     logger.error(f"Failed to create index for library {library_id}")
                     
             except Exception as e:
                 logger.error(f"Error processing library {library.id}: {str(e)}")
+                import traceback
+                logger.error(f"Library processing traceback: {traceback.format_exc()}")
                 continue
+        
+        # FINAL VERIFICATION: Check all indexes
+        logger.info("FINAL VERIFICATION: Checking all library indexes...")
+        all_indexes = await vector_service.get_all_library_indexes_info()
+        logger.info(f"VERIFICATION COMPLETE: Found {len(all_indexes)} accessible indexes:")
+        for lib_id, index_info in all_indexes.items():
+            logger.info(f"  - Library {lib_id}: {index_info.algorithm} index with {index_info.vector_count} vectors")
         
         logger.info("Completed initialization of all library embeddings and indexes")
         
     except Exception as e:
-        logger.error(f"Unexpected error during initialization: {str(e)}") 
+        logger.error(f"Unexpected error during initialization: {str(e)}")
+        import traceback
+        logger.error(f"Initialization traceback: {traceback.format_exc()}") 
