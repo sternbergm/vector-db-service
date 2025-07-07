@@ -4,10 +4,13 @@ Implements various distance metrics using NumPy for efficient computation.
 Optimized for Cohere embed-english-light-v3.0 (384 dimensions, cosine-optimized).
 """
 
+import logging
 import numpy as np
 import heapq
 from typing import Union, Iterator, Tuple, Dict, List
 
+
+class_logger = logging.getLogger(__name__)
 
 class SimilarityCalculator:
     """
@@ -420,12 +423,15 @@ class SimilarityCalculator:
         estimated_memory_mb = (dataset_size * 4) / (1024 * 1024)
         
         if dataset_size < 10_000:
+            class_logger.info(f"Small dataset - use fast batch processing")
             # Small dataset - use fast batch processing
             return self._batch_search(query_vector, vectors_dict, k, similarity_func)
         elif dataset_size < 50_000 and estimated_memory_mb < 100:  # Less than 100MB
+            class_logger.info(f"Medium dataset with acceptable memory usage")
             # Medium dataset with acceptable memory usage
             return self._batch_search(query_vector, vectors_dict, k, similarity_func)
         else:
+            class_logger.info(f"Large dataset or memory constraints - use heap approach")
             # Large dataset or memory constraints - use heap approach
             return self.heap_based_top_k(query_vector, vectors_dict, k, similarity_func)
     
@@ -439,12 +445,16 @@ class SimilarityCalculator:
         vectors_matrix = np.array(list(vectors_dict.values()))
         
         if similarity_func == "cosine":
+            class_logger.info(f"Using cosine similarity")
             similarities = self.batch_cosine_similarity(query_vector, vectors_matrix)
         elif similarity_func == "euclidean":
+            class_logger.info(f"Using euclidean similarity")
             similarities = self.batch_euclidean_similarity(query_vector, vectors_matrix)
         elif similarity_func == "manhattan":
+            class_logger.info(f"Using manhattan similarity")
             similarities = self.batch_manhattan_similarity(query_vector, vectors_matrix)
         elif similarity_func == "dot_product":
+            class_logger.info(f"Using dot product similarity")
             similarities = self.batch_dot_product_similarity(query_vector, vectors_matrix)
         else:
             # Fall back to generator approach for unsupported similarity functions

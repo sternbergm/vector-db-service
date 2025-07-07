@@ -43,13 +43,14 @@ class VectorIndex(ABC):
         pass
     
     @abstractmethod
-    def search(self, query_vector: np.ndarray, k: int = 10) -> List[Tuple[str, float]]:
+    def search(self, query_vector: np.ndarray, k: int = 10, similarity_function: str = "cosine") -> List[Tuple[str, float]]:
         """
         Search for k most similar vectors.
         
         Args:
             query_vector: Query vector to search with
             k: Number of top results to return
+            similarity_function: Similarity function to use for comparison
             
         Returns:
             List[Tuple[str, float]]: Top-k results as [(chunk_id, similarity), ...]
@@ -157,13 +158,14 @@ class FlatIndex(VectorIndex):
         
         logger.info(f"FlatIndex built: {self.vector_count} vectors, {self.dimension} dimensions")
     
-    def search(self, query_vector: np.ndarray, k: int = 10) -> List[Tuple[str, float]]:
+    def search(self, query_vector: np.ndarray, k: int = 10, similarity_function: str = "cosine") -> List[Tuple[str, float]]:
         """
         Search for k most similar vectors using vectorized similarity computation.
         
         Args:
             query_vector: Query vector to search with
             k: Number of top results to return
+            similarity_function: Similarity function to use for comparison
             
         Returns:
             List[Tuple[str, float]]: Top-k results sorted by similarity (highest first)
@@ -182,12 +184,12 @@ class FlatIndex(VectorIndex):
                 vectors_dict[chunk_id] = vector
         
         # Use the similarity calculator's smart search strategy
-        # This automatically chooses between batch processing and heap-based search
+        # Use the provided similarity function instead of the instance default
         results = self.similarity_calc.choose_search_strategy(
-            query_vector, vectors_dict, k, self.similarity_metric
+            query_vector, vectors_dict, k, similarity_function
         )
         
-        logger.debug(f"FlatIndex search: found {len(results)} results for k={k}")
+        logger.debug(f"FlatIndex search: found {len(results)} results for k={k} using {similarity_function}")
         return results
     
     def get_stats(self) -> Dict:
@@ -361,13 +363,14 @@ class LSHIndex(VectorIndex):
         logger.info(f"LSHIndex built: {self.vector_count} vectors, {total_buckets} buckets, "
                    f"avg bucket size: {avg_bucket_size:.1f}")
     
-    def search(self, query_vector: np.ndarray, k: int = 10) -> List[Tuple[str, float]]:
+    def search(self, query_vector: np.ndarray, k: int = 10, similarity_function: str = "cosine") -> List[Tuple[str, float]]:
         """
         Search for k most similar vectors using LSH bucketing.
         
         Args:
             query_vector: Query vector to search with
             k: Number of top results to return
+            similarity_function: Similarity function to use for comparison
             
         Returns:
             List[Tuple[str, float]]: Top-k results sorted by similarity (highest first)
@@ -408,10 +411,10 @@ class LSHIndex(VectorIndex):
         # Use similarity calculator's smart search strategy for final evaluation
         # This handles the optimal similarity computation method automatically
         results = self.similarity_calc.choose_search_strategy(
-            query_vector, candidates_dict, k, "cosine"  # LSH works best with cosine
+            query_vector, candidates_dict, k, similarity_function
         )
         
-        logger.debug(f"LSHIndex search: {len(candidates)} candidates, {len(results)} results for k={k}")
+        logger.debug(f"LSHIndex search: {len(candidates)} candidates, {len(results)} results for k={k} using {similarity_function}")
         return results
     
     def get_stats(self) -> Dict:
@@ -531,18 +534,34 @@ class GridIndex(VectorIndex):
         neighbors = []
         dimension = len(center_coords)
         
-        # Generate all combinations of neighbor offsets
-        def generate_offsets(dim_remaining, current_offset):
-            if dim_remaining == 0:
-                neighbor_coords = tuple(center_coords[i] + current_offset[i] 
-                                      for i in range(dimension))
-                neighbors.append(neighbor_coords)
-                return
+        # For high-dimensional spaces, limit the radius to prevent exponential explosion
+        # In 8D with radius=1, we get 3^8 = 6561 neighbors, which is too many
+        # Use a more conservative approach for high dimensions
+        if dimension > 4:
+            # Use Manhattan distance-based neighbors instead of full hypercube
+            # This gives at most 2*dimension*radius + 1 neighbors
+            neighbors = [center_coords]  # Include center
             
-            for offset in range(-radius, radius + 1):
-                generate_offsets(dim_remaining - 1, current_offset + [offset])
+            for dim in range(dimension):
+                for offset in range(-radius, radius + 1):
+                    if offset != 0:
+                        neighbor_coords = list(center_coords)
+                        neighbor_coords[dim] += offset
+                        neighbors.append(tuple(neighbor_coords))
+        else:
+            # For lower dimensions, use full hypercube neighbors
+            def generate_offsets(dim_remaining, current_offset):
+                if dim_remaining == 0:
+                    neighbor_coords = tuple(center_coords[i] + current_offset[i] 
+                                          for i in range(dimension))
+                    neighbors.append(neighbor_coords)
+                    return
+                
+                for offset in range(-radius, radius + 1):
+                    generate_offsets(dim_remaining - 1, current_offset + [offset])
+            
+            generate_offsets(dimension, [])
         
-        generate_offsets(dimension, [])
         return neighbors
     
     def build_index(self, chunk_ids: List[str]) -> None:
@@ -605,13 +624,14 @@ class GridIndex(VectorIndex):
         logger.info(f"GridIndex built: {self.vector_count} vectors, {non_empty_cells} cells, "
                    f"avg cell size: {avg_cell_size:.1f}, max cell size: {max_cell_size}")
     
-    def search(self, query_vector: np.ndarray, k: int = 10) -> List[Tuple[str, float]]:
+    def search(self, query_vector: np.ndarray, k: int = 10, similarity_function: str = "cosine") -> List[Tuple[str, float]]:
         """
         Search for k most similar vectors using grid spatial locality.
         
         Args:
             query_vector: Query vector to search with
             k: Number of top results to return
+            similarity_function: Similarity function to use for comparison
             
         Returns:
             List[Tuple[str, float]]: Top-k results sorted by similarity (highest first)
@@ -659,10 +679,10 @@ class GridIndex(VectorIndex):
         # Use similarity calculator's smart search strategy for final evaluation
         # This handles the optimal similarity computation method automatically
         results = self.similarity_calc.choose_search_strategy(
-            query_vector, candidates_dict, k, self.similarity_metric
+            query_vector, candidates_dict, k, similarity_function
         )
         
-        logger.debug(f"GridIndex search: {len(candidates)} candidates, {len(results)} results for k={k}")
+        logger.debug(f"GridIndex search: {len(candidates)} candidates, {len(results)} results for k={k} using {similarity_function}")
         return results
     
     def get_stats(self) -> Dict:

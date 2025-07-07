@@ -164,8 +164,7 @@ class EmbeddingService:
         except Exception as e:
             class_logger.error(f"Unexpected error calling Cohere API: {e}")
             raise EmbeddingAPIError(f"Unexpected error: {e}")
-    
-    @logger
+
     @timer
     async def generate_embedding(self, text: str) -> np.ndarray:
         """

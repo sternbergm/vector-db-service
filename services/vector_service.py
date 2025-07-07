@@ -10,7 +10,7 @@ from services.chunk_service import ChunkService
 from vector_db.storage import vector_storage
 from vector_db.algorithms import VectorIndex, FlatIndex, LSHIndex, GridIndex
 from schemas.chunk_schema import ChunkResponse, ChunkMetadata
-from schemas.search_schema import IndexAlgorithm, SearchResponse, SearchResult, LibraryIndexInfo
+from schemas.search_schema import IndexAlgorithm, SearchResponse, SearchResult, LibraryIndexInfo, SimilarityFunction, SearchRequest
 from exceptions import LibraryNotFoundError, ChunkNotFoundError, DatabaseError
 from decorators import logger, timer
 class_logger = logging.getLogger(__name__)
@@ -184,18 +184,15 @@ class VectorService:
     @logger
     @timer
     async def search_similar_chunks(self, 
-                                  query_text: str, 
                                   library_id: str, 
-                                  k: int = 10,
-                                  algorithm: Optional[IndexAlgorithm] = None) -> SearchResponse:
+                                  search_request: SearchRequest
+                                  ) -> SearchResponse:
         """
         Search for similar chunks in a library.
         
         Args:
-            query_text: Text to search for
             library_id: Library to search in
-            k: Number of top results to return
-            algorithm: Optional algorithm to use (uses library's preferred if None)
+            similarity_function: Similarity function to use for comparison
             
         Returns:
             SearchResponse: Complete search response with results and metadata
@@ -207,45 +204,52 @@ class VectorService:
         start_time = time.time()
         
         try:
-            # 1. Determine algorithm to use
-            if algorithm is None and self.library_service:
-                try:
-                    algorithm = await self.library_service.get_preferred_algorithm(library_id)
-                except LibraryNotFoundError:
-                    algorithm = self.default_algorithm
-            elif algorithm is None:
-                algorithm = self.default_algorithm
+            # 1. First, validate that the library exists
+            if self.library_service:
+                # Use library service to validate existence - this will throw LibraryNotFoundError if library doesn't exist
+                library_exists = await self.library_service.library_exists(library_id)
+                if not library_exists:
+                    raise LibraryNotFoundError(library_id)
             
-            # 2. Check if library has an index or build one
+            # 2. Determine library's preferred algorithm
+            library_algorithm = None
+            if self.library_service:
+                try:
+                    library_algorithm = await self.library_service.get_preferred_algorithm(library_id)
+                except LibraryNotFoundError:
+                    # Library doesn't exist - raise the error instead of silently handling it
+                    raise LibraryNotFoundError(library_id)
+            else:
+                library_algorithm = self.default_algorithm
+            
+            # 3. Check if library has an index or build one with its preferred algorithm
             if library_id not in self._library_indexes:
                 # Try to build index if library exists and has chunks
                 chunk_ids = vector_storage.filter_by_library(library_id)
                 if not chunk_ids:
                     class_logger.warning(f"Library {library_id} has no chunks for search")
                     return SearchResponse(
-                        query=query_text,
+                        query=search_request.query,
                         library_id=library_id,
                         results=[],
                         total_found=0,
                         search_time_ms=(time.time() - start_time) * 1000
                     )
                 
-                class_logger.info(f"Building index for library {library_id} with algorithm {algorithm.value if algorithm else 'default'}")
-                # Build index with specified algorithm
-                await self._rebuild_library_index(library_id, algorithm)
+                class_logger.info(f"Building index for library {library_id} with preferred algorithm {library_algorithm.value if library_algorithm else 'default'}")
+                # Build index with library's preferred algorithm
+                await self._rebuild_library_index(library_id, library_algorithm)
             
-            # 3. Check if we need to rebuild with different algorithm
-            current_algorithm = self._library_algorithms.get(library_id, self.default_algorithm)
-            if current_algorithm != algorithm:
-                class_logger.info(f"Rebuilding index for library {library_id} with algorithm {algorithm.value if algorithm else 'default'}")
-                await self._rebuild_library_index(library_id, algorithm)
+
             
-            # 4. Generate query embedding
-            query_embedding = await embedding_service.generate_query_embedding(query_text)
+            # 4. If using a different algorithm for search, create temporary index
+            index_to_use = self._library_indexes[library_id]
             
-            # 5. Search using library index
-            index = self._library_indexes[library_id]
-            raw_results = index.search(query_embedding, k)
+            # 5. Generate query embedding
+            query_embedding = await embedding_service.generate_query_embedding(search_request.query)
+            
+            # 6. Search using the determined index
+            raw_results = index_to_use.search(query_embedding, search_request.k, search_request.similarity_function.value if search_request.similarity_function else "cosine")
             
             # 6. Convert raw results to SearchResult objects with full chunk data using batch fetch
             search_results = []
@@ -278,10 +282,10 @@ class VectorService:
             
             search_time_ms = (time.time() - start_time) * 1000
             
-            class_logger.info(f"Found {len(search_results)} similar chunks in library {library_id} using {algorithm.value if algorithm else 'default'} in {search_time_ms:.1f}ms")
+            class_logger.info(f"Found {len(search_results)} similar chunks in library {library_id} using {library_algorithm.value if library_algorithm else 'default'} algorithm with {search_request.similarity_function.value if search_request.similarity_function else 'cosine'} similarity in {search_time_ms:.1f}ms")
             
             return SearchResponse(
-                query=query_text,
+                query=search_request.query,
                 library_id=library_id,
                 results=search_results,
                 total_found=len(search_results),
@@ -289,13 +293,16 @@ class VectorService:
             )
             
         except EmbeddingError:
-            class_logger.error(f"Failed to generate query embedding: {query_text}")
+            class_logger.error(f"Failed to generate query embedding: {search_request.query}")
+            raise
+        except LibraryNotFoundError:
+            class_logger.error(f"Library {library_id} not found")
             raise
         except Exception as e:
             class_logger.error(f"Failed to search library {library_id}: {str(e)}")
             # Return empty response on error
             return SearchResponse(
-                query=query_text,
+                query=search_request.query,
                 library_id=library_id,
                 results=[],
                 total_found=0,
