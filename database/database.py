@@ -1,9 +1,14 @@
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy.exc import IntegrityError
 import os
+import logging
 from .models import Base
 from dotenv import load_dotenv
 
 load_dotenv(override=True)  # Force override existing env vars
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 # Database URL - using asyncpg for PostgreSQL async support
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -43,7 +48,22 @@ async def get_db() -> AsyncSession:
 async def create_tables():
     """Create all tables - useful for development/testing"""
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        try:
+            await conn.run_sync(Base.metadata.create_all, checkfirst=True)
+        except (IntegrityError, Exception) as e:
+            # Handle PostgreSQL ENUM duplicate creation race condition
+            # This is common when multiple processes/workers start simultaneously
+            if ("duplicate key value violates unique constraint" in str(e) and 
+                "pg_type_typname_nsp_index" in str(e) and 
+                "indexalgorithmenum" in str(e)):
+                # The ENUM already exists, which is expected in multi-process environments
+                # We can safely ignore this error and continue
+                logger.info("ENUM type 'indexalgorithmenum' already exists (expected in multi-process startup)")
+                # Don't re-raise the error - the database schema is already set up
+            else:
+                # Re-raise other unexpected errors
+                logger.error(f"Error creating database tables: {e}")
+                raise e
 
 # Function to drop all tables (for testing)
 async def drop_tables():

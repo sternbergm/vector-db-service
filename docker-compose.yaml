@@ -33,18 +33,19 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    build: 
-      context: ./vector-db-svc
-      dockerfile: Dockerfile
+    build: .
     container_name: vector-db-svc
     env_file:
       - .env
     ports:
       - "8000:8000"
     restart: unless-stopped
-    volumes:
-      - ./vector-db-svc:/app
-    working_dir: /app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
 volumes:
   postgres_data:

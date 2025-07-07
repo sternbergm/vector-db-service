@@ -8,13 +8,14 @@ from services.library_service import LibraryService
 from repositories.chunk_repository import ChunkRepository
 from repositories.document_repository import DocumentRepository
 from repositories.library_repository import LibraryRepository
+from services.vector_service import VectorService
 
 # Global service instances
 vector_service_instance = None
 library_service_instance = None
 chunk_service_instance = None
 
-async def get_vector_service_dependency(db: AsyncSession = Depends(get_db)):
+async def get_vector_service_dependency(db: AsyncSession = Depends(get_db)) -> VectorService:
     """Get the vector service instance with lazy initialization."""
     global vector_service_instance, library_service_instance, chunk_service_instance
     

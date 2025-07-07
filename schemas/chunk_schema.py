@@ -33,5 +33,4 @@ class ChunkResponse(BaseModel):
     embedding: Optional[List[float]] = None
     document_id: Optional[str] = None
     library_id: str
-    metadata: ChunkMetadata
-    similarity_score: Optional[float] = None  # For search results 
+    metadata: ChunkMetadata 

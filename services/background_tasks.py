@@ -7,7 +7,6 @@ from services.library_service import LibraryService
 from services.embedding_service import EmbeddingError
 from schemas.chunk_schema import ChunkResponse
 from schemas.search_schema import IndexAlgorithm
-from exceptions import ChunkNotFoundError, DatabaseError, LibraryNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -92,11 +91,68 @@ async def remove_from_vector_index(chunk_id: str, library_id: str, vector_servic
         logger.error(f"Unexpected error during background vector removal for chunk {chunk_id}: {str(e)}")
 
 
+async def cleanup_orphaned_vectors(library_id: str, vector_service: VectorService):
+    """
+    Background task to clean up orphaned vectors that exist in vector storage 
+    but not in the database.
+    
+    This is typically called before reindexing after document/chunk deletions.
+    
+    Args:
+        library_id: ID of the library to clean up
+        vector_service: VectorService instance
+    """
+    try:
+        logger.info(f"Starting orphaned vector cleanup for library {library_id}")
+        
+        # Get chunk IDs from vector storage
+        from vector_db.storage import vector_storage
+        vector_chunk_ids = set(vector_storage.filter_by_library(library_id))
+        
+        # Get chunk IDs from database
+        db_chunk_ids = set()
+        try:
+            # Get all chunks from database for this library
+            chunks = await vector_service.chunk_service.get_chunks_by_library(library_id)
+            db_chunk_ids = {chunk.id for chunk in chunks}
+        except Exception as e:
+            logger.error(f"Failed to get chunks from database for library {library_id}: {str(e)}")
+            return
+        
+        # Find orphaned vectors (exist in vector storage but not in database)
+        orphaned_chunk_ids = vector_chunk_ids - db_chunk_ids
+        
+        if orphaned_chunk_ids:
+            logger.info(f"Found {len(orphaned_chunk_ids)} orphaned vectors in library {library_id}")
+            
+            # Remove orphaned vectors
+            removed_count = 0
+            for chunk_id in orphaned_chunk_ids:
+                try:
+                    success = vector_storage.remove_vector(chunk_id)
+                    if success:
+                        removed_count += 1
+                        logger.debug(f"Removed orphaned vector for chunk {chunk_id}")
+                    else:
+                        logger.warning(f"Failed to remove orphaned vector for chunk {chunk_id}")
+                except Exception as e:
+                    logger.error(f"Error removing orphaned vector for chunk {chunk_id}: {str(e)}")
+                    continue
+            
+            logger.info(f"Removed {removed_count}/{len(orphaned_chunk_ids)} orphaned vectors from library {library_id}")
+        else:
+            logger.info(f"No orphaned vectors found in library {library_id}")
+        
+    except Exception as e:
+        logger.error(f"Unexpected error during orphaned vector cleanup for library {library_id}: {str(e)}")
+
+
 async def reindex_library(library_id: str, vector_service: VectorService):
     """
     Background task to completely rebuild a library's vector index.
     
     This can be triggered manually or when there are major changes.
+    This includes cleaning up orphaned vectors before rebuilding the index.
     
     Args:
         library_id: ID of the library to reindex
@@ -105,6 +161,9 @@ async def reindex_library(library_id: str, vector_service: VectorService):
     try:
         logger.info(f"Starting background library reindexing for library {library_id}")
         
+        # Clean up orphaned vectors before rebuilding
+        await cleanup_orphaned_vectors(library_id, vector_service)
+        
         # Force rebuild of the library index
         await vector_service._rebuild_library_index(library_id)
         
@@ -112,6 +171,58 @@ async def reindex_library(library_id: str, vector_service: VectorService):
         
     except Exception as e:
         logger.error(f"Unexpected error during background library reindexing for library {library_id}: {str(e)}")
+
+
+async def cleanup_all_orphaned_vectors(vector_service: VectorService):
+    """
+    Background task to clean up orphaned vectors across all libraries.
+    
+    This is useful for maintenance operations to ensure vector storage
+    is in sync with the database.
+    
+    Args:
+        vector_service: VectorService instance
+    """
+    try:
+        logger.info("Starting global orphaned vector cleanup")
+        
+        # Get all library IDs that have vectors
+        from vector_db.storage import vector_storage
+        all_library_ids = vector_storage.get_library_ids()
+        
+        if not all_library_ids:
+            logger.info("No libraries found with vectors")
+            return
+        
+        logger.info(f"Found {len(all_library_ids)} libraries with vectors")
+        
+        # Clean up each library
+        total_removed = 0
+        for library_id in all_library_ids:
+            try:
+                # Get initial count
+                initial_count = len(vector_storage.filter_by_library(library_id))
+                
+                # Clean up orphaned vectors
+                await cleanup_orphaned_vectors(library_id, vector_service)
+                
+                # Get final count
+                final_count = len(vector_storage.filter_by_library(library_id))
+                
+                removed_count = initial_count - final_count
+                total_removed += removed_count
+                
+                if removed_count > 0:
+                    logger.info(f"Removed {removed_count} orphaned vectors from library {library_id}")
+                    
+            except Exception as e:
+                logger.error(f"Error cleaning up library {library_id}: {str(e)}")
+                continue
+        
+        logger.info(f"Global orphaned vector cleanup completed. Total removed: {total_removed}")
+        
+    except Exception as e:
+        logger.error(f"Unexpected error during global orphaned vector cleanup: {str(e)}")
 
 
 async def create_library_index_with_algorithm(library_id: str, 

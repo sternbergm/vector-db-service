@@ -154,7 +154,7 @@ async def delete_document(
     document_service: document_service_dependency,
     vector_service = Depends(get_vector_service_dependency)
 ):
-    """Delete document and all its chunks with background vector index cleanup"""
+    """Delete document and all its chunks with background vector cleanup and reindexing"""
     try:
         # First get document to verify it exists and belongs to the library
         document = await document_service.get_document(str(document_id))

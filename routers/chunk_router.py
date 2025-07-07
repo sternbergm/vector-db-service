@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, status, Path, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, status, Path, BackgroundTasks, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Annotated, List, Optional
 from pydantic import BaseModel
@@ -20,6 +20,7 @@ from services.background_tasks import (
     remove_from_vector_index
 )
 from services.dependencies import get_vector_service_dependency
+from services.vector_service import VectorService
 
 # Create a request model without library_id since it comes from the URL
 class ChunkCreateRequest(BaseModel):
@@ -33,6 +34,7 @@ async def get_chunk_service(db: AsyncSession = Depends(get_db)) -> ChunkService:
     return ChunkService(chunk_repository, document_repository, library_repository)
 
 chunk_service_dependency = Annotated[ChunkService, Depends(get_chunk_service)]
+vector_service_dependency = Annotated[VectorService, Depends(get_vector_service_dependency)]
 
 router = APIRouter(prefix="/libraries/{library_id}/chunks", tags=["chunks"])
 
@@ -44,7 +46,8 @@ async def create_chunk(
     chunk_data: ChunkCreateRequest,
     background_tasks: BackgroundTasks,
     chunk_service: chunk_service_dependency,
-    vector_service = Depends(get_vector_service_dependency)
+    vector_service: vector_service_dependency,
+    document_id: Annotated[UUID, Query(description="The UUID of the document")] = None,
 ):
     """Create a new chunk in the specified library with background embedding generation"""
     try:
@@ -52,7 +55,7 @@ async def create_chunk(
         full_chunk_data = ChunkCreate(
             text=chunk_data.text,
             library_id=str(library_id),
-            document_id=None,  # Will be auto-managed by service
+            document_id=str(document_id),  # Will be auto-managed by service
             metadata=chunk_data.metadata
         )
         
@@ -101,6 +104,8 @@ async def get_chunks_by_library(
             detail=e.message
         )
 
+
+
 @router.get("/{chunk_id}", response_model=ChunkResponse)
 @logger
 @timer
@@ -138,7 +143,7 @@ async def update_chunk(
     update_data: ChunkUpdate,
     background_tasks: BackgroundTasks,
     chunk_service: chunk_service_dependency,
-    vector_service = Depends(get_vector_service_dependency)
+    vector_service: vector_service_dependency
 ):
     """Update chunk with background embedding re-generation if text changed"""
     try:
@@ -182,7 +187,7 @@ async def delete_chunk(
     chunk_id: Annotated[UUID, Path(description="The UUID of the chunk")],
     background_tasks: BackgroundTasks,
     chunk_service: chunk_service_dependency,
-    vector_service = Depends(get_vector_service_dependency)
+    vector_service: vector_service_dependency
 ):
     """Delete chunk with background vector index cleanup"""
     try:
@@ -216,42 +221,3 @@ async def delete_chunk(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=e.message
         )
-
-@router.get("/unindexed", response_model=List[ChunkResponse])
-@logger
-@timer
-async def get_unindexed_chunks(
-    library_id: Annotated[UUID, Path(description="The UUID of the library")],
-    chunk_service: chunk_service_dependency
-):
-    """Get chunks that don't have embeddings yet"""
-    try:
-        chunks = await chunk_service.get_unindexed_chunks(str(library_id))
-        return chunks
-    except LibraryNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=e.message
-        )
-    except DatabaseError as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=e.message
-        )
-
-@router.get("/stats")
-@logger
-@timer
-async def get_chunk_stats(
-    library_id: Annotated[UUID, Path(description="The UUID of the library")],
-    chunk_service: chunk_service_dependency
-):
-    """Get chunk statistics"""
-    try:
-        stats = await chunk_service.get_chunk_stats()
-        return stats
-    except DatabaseError as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=e.message
-        ) 

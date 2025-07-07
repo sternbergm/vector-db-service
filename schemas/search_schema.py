@@ -12,13 +12,21 @@ class IndexAlgorithm(str, Enum):
     GRID = "grid"           # Grid-based partitioning - balanced approach
 
 
+class SimilarityFunction(str, Enum):
+    """Supported similarity functions for vector comparison."""
+    COSINE = "cosine"           # Cosine similarity - best for text embeddings
+    EUCLIDEAN = "euclidean"     # Euclidean distance converted to similarity
+    MANHATTAN = "manhattan"     # Manhattan distance converted to similarity
+    DOT_PRODUCT = "dot_product" # Dot product similarity
+
+
 class SearchRequest(BaseModel):
     """Request model for k-NN similarity search."""
     query: str = Field(..., description="Text to search for", min_length=1)
     k: int = Field(default=10, description="Number of top results to return", ge=1, le=100)
-    algorithm: Optional[IndexAlgorithm] = Field(
-        default=None, 
-        description="Optional algorithm to use for search (uses library's preferred if not specified)"
+    similarity_function: Optional[SimilarityFunction] = Field(
+        default=SimilarityFunction.COSINE,
+        description="Similarity function to use for comparison"
     )
 
 

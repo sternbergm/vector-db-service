@@ -10,7 +10,7 @@ from schemas.library_schema import LibraryCreate, LibraryUpdate, LibraryResponse
 from schemas.search_schema import SearchRequest, SearchResponse, IndexAlgorithm, IndexAlgorithmRequest, IndexAlgorithmResponse
 from exceptions import LibraryNotFoundError, DatabaseError, ValidationError
 from decorators import logger, timer
-
+from services.vector_service import VectorService
 # Import the vector service dependency from dependencies module
 from services.dependencies import get_vector_service_dependency
 
@@ -22,7 +22,7 @@ async def get_library_service(db: AsyncSession = Depends(get_db)) -> LibraryServ
     return LibraryService(library_repository)
 
 library_service_dependency = Annotated[LibraryService, Depends(get_library_service)]
-
+vector_service_dependency = Annotated[VectorService, Depends(get_vector_service_dependency)]
 router = APIRouter(prefix="/libraries", tags=["libraries"])
 
 @router.post("/", response_model=LibraryResponse, status_code=status.HTTP_201_CREATED)
@@ -32,7 +32,7 @@ async def create_library(
     library_data: LibraryCreate,
     background_tasks: BackgroundTasks,
     library_service: library_service_dependency,
-    vector_service = Depends(get_vector_service_dependency)
+    vector_service: vector_service_dependency
 ):
     """Create a new library"""
     try:
@@ -103,7 +103,7 @@ async def update_library(
     update_data: LibraryUpdate,
     background_tasks: BackgroundTasks,
     library_service: library_service_dependency,
-    vector_service = Depends(get_vector_service_dependency)
+    vector_service: vector_service_dependency
 ):
     """Update library"""
     try:
@@ -142,7 +142,7 @@ async def update_library(
 async def delete_library(
     library_id: Annotated[UUID, Path(description="The UUID of the library")],
     library_service: library_service_dependency,
-    vector_service = Depends(get_vector_service_dependency)
+    vector_service: vector_service_dependency
 ):
     """Delete library and all its chunks/documents"""
     try:
@@ -189,7 +189,7 @@ async def set_library_index_algorithm(
     algorithm_request: IndexAlgorithmRequest,
     background_tasks: BackgroundTasks,
     library_service: library_service_dependency,
-    vector_service = Depends(get_vector_service_dependency)
+    vector_service: vector_service_dependency
 ):
     """Set or change the index algorithm for a library"""
     try:
@@ -235,7 +235,7 @@ async def set_library_index_algorithm(
 @timer
 async def get_library_index_info(
     library_id: Annotated[UUID, Path(description="The UUID of the library")],
-    vector_service = Depends(get_vector_service_dependency)
+    vector_service: vector_service_dependency
 ):
     """Get information about a library's current index"""
     try:
@@ -258,16 +258,14 @@ async def get_library_index_info(
 async def knn_search(
     library_id: Annotated[UUID, Path(description="The UUID of the library")],
     search_request: SearchRequest,
-    vector_service = Depends(get_vector_service_dependency)
+    vector_service: vector_service_dependency
 ):
     """Perform k-NN similarity search in the specified library"""
     try:
-        # Use algorithm from search request if provided
+        # Use algorithm and similarity function from search request if provided
         search_response = await vector_service.search_similar_chunks(
-            query_text=search_request.query,
             library_id=str(library_id),
-            k=search_request.k,
-            algorithm=search_request.algorithm
+            search_request=search_request
         )
         
         return search_response
