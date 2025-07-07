@@ -73,12 +73,16 @@ class LibraryRepository:
     @logger
     @timer
     async def delete(self, library_id: str) -> bool:
-        """Delete library"""
-        result = await self.db.execute(
-            delete(Library).where(Library.id == library_id)
-        )
+        """Delete library and cascade to documents and chunks"""
+        # First, get the library object to trigger ORM cascade deletions
+        library = await self.get_with_relationships(library_id)
+        if not library:
+            return False
+        
+        # Delete the library object - this will trigger cascade deletions
+        await self.db.delete(library)
         await self.db.commit()
-        return result.rowcount > 0
+        return True
     
     @logger
     @timer
